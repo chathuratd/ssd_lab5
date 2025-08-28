@@ -1,0 +1,158 @@
+name: Lab 5 – Build, ZAP Before/After, Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      reg_no:
+        description: "Your Registration Number (e.g., IT20xxxxx)"
+        required: true
+        type: string
+
+jobs:
+  scan-and-package:
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: my-app
+      WAR_NAME: my-app.war
+      CONTEXT_PATH: /my-app
+      TOMCAT_IMAGE: tomcat:9.0-jdk17
+      ZAP_TARGET: http://localhost:8080/my-app/
+      ZAP_REPORT_BEFORE: zap-before.html
+      ZAP_REPORT_AFTER: zap-after.html
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Build (BEFORE fix)
+        run: mvn -B -DskipTests package
+
+      - name: Start Tomcat (BEFORE)
+        run: |
+          docker run -d --rm --name tomcat-before -p 8080:8080 \
+            -v "$PWD/target/${{ env.WAR_NAME }}:/usr/local/tomcat/webapps/${{ env.WAR_NAME }}" \
+            -v "$PWD/target/${{ env.APP_NAME }}:/usr/local/tomcat/webapps/${{ env.APP_NAME }}" \
+            ${{ env.TOMCAT_IMAGE }}
+
+      - name: Wait for app (BEFORE)
+        run: |
+          for i in {1..60}; do
+            if curl -s -o /dev/null -w "%{http_code}" "${{ env.ZAP_TARGET }}" | grep -q "200\|302\|301"; then
+              echo "App is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "App did not become ready in time"; docker logs tomcat-before; exit 1
+
+      - name: ZAP Baseline Scan (BEFORE)
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ env.ZAP_TARGET }}
+          cmd_options: -r ${{ env.ZAP_REPORT_BEFORE }}
+        continue-on-error: true
+
+      - name: Collect ZAP BEFORE report
+        run: |
+          mkdir -p zap-reports
+          mv ${{ env.ZAP_REPORT_BEFORE }} zap-reports/
+
+      - name: Stop Tomcat (BEFORE)
+        if: always()
+        run: docker stop tomcat-before
+
+      # ---- APPLY FIX IN CI (safety net) ----
+      - name: Ensure OWASP Encoder dependency exists
+        run: |
+          if ! grep -q "<artifactId>encoder</artifactId>" pom.xml; then
+            awk '1;/<\/dependencies>/{print "  <dependency>\n    <groupId>org.owasp.encoder</groupId>\n    <artifactId>encoder</artifactId>\n    <version>1.2.3</version>\n  </dependency>"}' pom.xml > pom.xml.new
+            mv pom.xml.new pom.xml
+          fi
+
+      - name: Patch welcome.jsp to safe output (if not already)
+        run: |
+          JSP=src/main/webapp/welcome.jsp
+          if [ -f "$JSP" ]; then
+            cat > "$JSP" <<'EOF'
+<%@ page contentType="text/html;charset=UTF-8" language="java" %>
+<%@ page import="org.owasp.encoder.Encode" %>
+<html>
+<head>
+    <title>Welcome</title>
+</head>
+<body>
+<%
+    String age2 = request.getParameter("age");
+    if (age2 == null) { age2 = ""; }
+%>
+Welcome!! Your age is <%= Encode.forHtml(age2) %>
+</body>
+</html>
+EOF
+          else
+            echo "welcome.jsp not found"; exit 1
+          fi
+
+      - name: Build (AFTER fix)
+        run: mvn -B -DskipTests clean package
+
+      - name: Start Tomcat (AFTER)
+        run: |
+          docker run -d --rm --name tomcat-after -p 8080:8080 \
+            -v "$PWD/target/${{ env.WAR_NAME }}:/usr/local/tomcat/webapps/${{ env.WAR_NAME }}" \
+            -v "$PWD/target/${{ env.APP_NAME }}:/usr/local/tomcat/webapps/${{ env.APP_NAME }}" \
+            ${{ env.TOMCAT_IMAGE }}
+
+      - name: Wait for app (AFTER)
+        run: |
+          for i in {1..60}; do
+            if curl -s -o /dev/null -w "%{http_code}" "${{ env.ZAP_TARGET }}" | grep -q "200\|302\|301"; then
+              echo "App is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "App did not become ready in time"; docker logs tomcat-after; exit 1
+
+      - name: ZAP Baseline Scan (AFTER)
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ env.ZAP_TARGET }}
+          cmd_options: -r ${{ env.ZAP_REPORT_AFTER }}
+        continue-on-error: true
+
+      - name: Collect ZAP AFTER report
+        run: mv ${{ env.ZAP_REPORT_AFTER }} zap-reports/
+
+      - name: Stop Tomcat (AFTER)
+        if: always()
+        run: docker stop tomcat-after
+
+      - name: Prepare updated project copy
+        run: |
+          mkdir -p submission/${{ env.APP_NAME }}
+          rsync -a --exclude 'target' --exclude '.git' --exclude '.github' ./ submission/${{ env.APP_NAME }}/
+
+      - name: Create submission ZIP
+        run: |
+          cd submission
+          mkdir -p reports
+          mv ../zap-reports/* reports/
+          zip -r "${{ github.event.inputs.reg_no }}.zip" "${{ env.APP_NAME }}" reports
+
+      - name: Upload submission ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: submission-${{ github.event.inputs.reg_no }}
+          path: submission/*.zip
+
+      - name: Upload individual ZAP reports (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-reports
+          path: zap-reports/*.html
