@@ -52,16 +52,17 @@ jobs:
           echo "App did not become ready in time"; docker logs tomcat-before; exit 1
 
       - name: ZAP Baseline Scan (BEFORE)
-        uses: zaproxy/action-baseline@v0.12.0
-        with:
-          target: ${{ env.ZAP_TARGET }}
-          cmd_options: -r ${{ env.ZAP_REPORT_BEFORE }}
+        run: |
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+          docker run --user root --network=host -v $(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t ${{ env.ZAP_TARGET }} -r ${{ env.ZAP_REPORT_BEFORE }}
         continue-on-error: true
 
       - name: Collect ZAP BEFORE report
         run: |
           mkdir -p zap-reports
-          mv ${{ env.ZAP_REPORT_BEFORE }} zap-reports/
+          if [ -f ${{ env.ZAP_REPORT_BEFORE }} ]; then
+            mv ${{ env.ZAP_REPORT_BEFORE }} zap-reports/
+          fi
 
       - name: Stop Tomcat (BEFORE)
         if: always()
@@ -118,14 +119,16 @@ jobs:
           echo "App did not become ready in time"; docker logs tomcat-after; exit 1
 
       - name: ZAP Baseline Scan (AFTER)
-        uses: zaproxy/action-baseline@v0.12.0
-        with:
-          target: ${{ env.ZAP_TARGET }}
-          cmd_options: -r ${{ env.ZAP_REPORT_AFTER }}
+        run: |
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+          docker run --user root --network=host -v $(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t ${{ env.ZAP_TARGET }} -r ${{ env.ZAP_REPORT_AFTER }}
         continue-on-error: true
 
       - name: Collect ZAP AFTER report
-        run: mv ${{ env.ZAP_REPORT_AFTER }} zap-reports/
+        run: |
+          if [ -f ${{ env.ZAP_REPORT_AFTER }} ]; then
+            mv ${{ env.ZAP_REPORT_AFTER }} zap-reports/
+          fi
 
       - name: Stop Tomcat (AFTER)
         if: always()
