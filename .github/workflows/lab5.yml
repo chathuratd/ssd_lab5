@@ -79,22 +79,20 @@ jobs:
         run: |
           JSP=src/main/webapp/welcome.jsp
           if [ -f "$JSP" ]; then
-            cat > "$JSP" <<'EOF'
-<%@ page contentType="text/html;charset=UTF-8" language="java" %>
-<%@ page import="org.owasp.encoder.Encode" %>
-<html>
-<head>
-    <title>Welcome</title>
-</head>
-<body>
-<%
-    String age2 = request.getParameter("age");
-    if (age2 == null) { age2 = ""; }
-%>
-Welcome!! Your age is <%= Encode.forHtml(age2) %>
-</body>
-</html>
-EOF
+            echo '<%@ page contentType="text/html;charset=UTF-8" language="java" %>' > "$JSP"
+            echo '<%@ page import="org.owasp.encoder.Encode" %>' >> "$JSP"
+            echo '<html>' >> "$JSP"
+            echo '<head>' >> "$JSP"
+            echo '    <title>Welcome</title>' >> "$JSP"
+            echo '</head>' >> "$JSP"
+            echo '<body>' >> "$JSP"
+            echo '<%' >> "$JSP"
+            echo '    String age2 = request.getParameter("age");' >> "$JSP"
+            echo '    if (age2 == null) { age2 = ""; }' >> "$JSP"
+            echo '%>' >> "$JSP"
+            echo 'Welcome!! Your age is <%= Encode.forHtml(age2) %>' >> "$JSP"
+            echo '</body>' >> "$JSP"
+            echo '</html>' >> "$JSP"
           else
             echo "welcome.jsp not found"; exit 1
           fi
